@@ -90,4 +90,81 @@ class RuleBasedActionRecognizer:
             vertical_ref = hip_c + np.array([0, -100])  # a point straight above hip
             torso_angle = angle_between(sh_c, hip_c, vertical_ref)
 
-        # ---- Ankle
+        # ---- Ankle motion magnitude per frame (walking/running speed) ----
+        ankle_speeds = []
+        for a, b in zip(history[:-1], history[1:]):
+            if valid(a, KP["l_ankle"]) and valid(b, KP["l_ankle"]):
+                ankle_speeds.append(euclidean(a[KP["l_ankle"]][:2], b[KP["l_ankle"]][:2]))
+            if valid(a, KP["r_ankle"]) and valid(b, KP["r_ankle"]):
+                ankle_speeds.append(euclidean(a[KP["r_ankle"]][:2], b[KP["r_ankle"]][:2]))
+        avg_ankle_speed = float(np.mean(ankle_speeds)) if ankle_speeds else 0.0
+
+        # ---- Wrist above shoulder (waving signal) ----
+        waving = False
+        if valid(last, KP["l_wrist"]) and valid(last, KP["l_shoulder"]):
+            waving = waving or (last[KP["l_wrist"]][1] < last[KP["l_shoulder"]][1] - 15)
+        if valid(last, KP["r_wrist"]) and valid(last, KP["r_shoulder"]):
+            waving = waving or (last[KP["r_wrist"]][1] < last[KP["r_shoulder"]][1] - 15)
+
+        # Rough scale reference (shoulder width) to normalize thresholds across
+        # people at different distances from the camera.
+        scale = 60.0
+        if all(valid(last, k) for k in [KP["l_shoulder"], KP["r_shoulder"]]):
+            scale = max(euclidean(last[KP["l_shoulder"]][:2], last[KP["r_shoulder"]][:2]), 20.0)
+
+        # ---------------- Decision rules (checked in priority order) ----------------
+        if vertical_drop > 0.9 * scale and torso_angle > 45:
+            return "Falling"
+        if torso_angle > 55:
+            return "Sitting"
+        if waving and avg_ankle_speed < 0.15 * scale:
+            return "Waving"
+        if avg_ankle_speed > 0.35 * scale:
+            return "Running"
+        if avg_ankle_speed > 0.08 * scale:
+            return "Walking"
+        return "Standing"
+
+
+# ------------------------------------------------------------------
+# 3. Optional deep-learning classifier (train on your own data)
+# ------------------------------------------------------------------
+class LSTMActionClassifier(nn.Module):
+    def __init__(self, input_size=34, hidden_size=64, num_layers=2, num_classes=len(ACTIONS)):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers,
+                             batch_first=True, dropout=0.3 if num_layers > 1 else 0.0)
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_size, 32),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(32, num_classes),
+        )
+
+    def forward(self, x):
+        # x: (batch, seq_len, 34)  -- 17 keypoints * (x, y)
+        out, _ = self.lstm(x)
+        last_step = out[:, -1, :]
+        return self.fc(last_step)
+
+
+class LSTMActionRecognizer:
+    """Loads a trained LSTMActionClassifier checkpoint and runs inference."""
+
+    def __init__(self, checkpoint_path, device="cpu", min_frames=10):
+        self.device = device
+        self.min_frames = min_frames
+        self.model = LSTMActionClassifier().to(device)
+        state = torch.load(checkpoint_path, map_location=device)
+        self.model.load_state_dict(state)
+        self.model.eval()
+
+    @torch.no_grad()
+    def classify(self, history):
+        if len(history) < self.min_frames:
+            return "Unknown"
+        seq = np.stack([normalize_pose(kp).flatten() for kp in history])  # (T, 34)
+        tensor = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(self.device)
+        logits = self.model(tensor)
+        pred = int(torch.argmax(logits, dim=1).item())
+        return ACTIONS[pred]
