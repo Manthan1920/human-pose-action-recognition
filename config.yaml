@@ -1,0 +1,34 @@
+# ============================================================
+# Configuration for Human Pose Estimation + Action Recognition
+# in Crowded Scenes
+# ============================================================
+
+pose_model:
+  # yolov8n-pose.pt (fastest, least accurate) -> good for laptops/webcams
+  # yolov8s-pose.pt (balanced)
+  # yolov8m-pose.pt / yolov8l-pose.pt / yolov8x-pose.pt (most accurate, slower)
+  weights: "yolov8s-pose.pt"
+  conf_threshold: 0.35      # ignore detections below this confidence
+  iou_threshold: 0.45       # NMS overlap threshold (lower = stricter, helps in crowds)
+  device: "cpu"             # set to "cuda" if you have a GPU
+
+tracker:
+  type: "bytetrack"         # ultralytics built-in tracker (good in crowded scenes)
+  # alt: "botsort"
+
+action_recognition:
+  mode: "rule_based"        # "rule_based" (works instantly) or "lstm" (needs training)
+  buffer_size: 30           # number of past frames kept per person (~1 sec at 30fps)
+  min_frames_for_decision: 10
+  lstm_checkpoint: "models/action_lstm.pt"
+
+video:
+  resize_width: 960         # resize input for speed; set null to keep original
+  draw_skeleton: true
+  draw_ids: true
+  draw_action_label: true
+  output_fps: 20
+
+paths:
+  sample_video: "data/sample_videos/sample.mp4"
+  output_dir: "outputs"
