@@ -87,4 +87,26 @@ def draw_label(frame, bbox, track_id, action, color=None):
     color = color or ACTION_COLORS.get(action, (255, 255, 255))
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
     label = f"ID {track_id}: {action}"
-    (tw,
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+    cv2.rectangle(frame, (x1, max(0, y1 - th - 10)), (x1 + tw + 6, y1), color, -1)
+    cv2.putText(frame, label, (x1 + 3, max(15, y1 - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2, cv2.LINE_AA)
+    return frame
+
+
+def normalize_pose(keypoints):
+    """
+    Normalize a keypoint array relative to hip-center and torso scale.
+    Makes the pose invariant to the person's position and distance from camera.
+    keypoints: np.array shape (17, 3) -> (x, y, conf)
+    Returns np.array shape (17, 2) normalized (x, y).
+    """
+    kps = np.array(keypoints, dtype=np.float32)
+    l_hip, r_hip = kps[KP["l_hip"]][:2], kps[KP["r_hip"]][:2]
+    l_sh, r_sh = kps[KP["l_shoulder"]][:2], kps[KP["r_shoulder"]][:2]
+    hip_center = (l_hip + r_hip) / 2.0
+    shoulder_center = (l_sh + r_sh) / 2.0
+    scale = euclidean(hip_center, shoulder_center)
+    scale = scale if scale > 1e-3 else 1.0
+    normalized = (kps[:, :2] - hip_center) / scale
+    return normalized
